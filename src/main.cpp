@@ -15,8 +15,14 @@
  *   Motor RL : pinA=D6,  pinB=D7
  *   Motor RR : pinA=D9,  pinB=D8
  *
- * NOTE: Reverse requires an H-bridge. For now, pinB does nothing.
- *       Physically swap motor wires to test reverse direction manually.
+ * COMMANDS:
+ *   w      - forward (all motors)
+ *   s      - reverse (all motors)
+ *   a      - turn left  (left wheels reverse, right wheels forward)
+ *   d      - turn right (left wheels forward, right wheels reverse)
+ *   x      - stop
+ *   0-9    - set speed (1=10%, 2=20% ... 9=90%, 0=100%)
+ *   f/r    - ramp test forward/reverse
  */
 
 #include <Arduino.h>
@@ -35,19 +41,34 @@ typedef struct {
 } Motor;
 
 // --- Motor Definitions ---
+//                FL      FR      RL      RR
 const Motor MOTORS[] = {
-  {3, 2},   // FL
-  {5, 4},   // FR
-  {6, 7},   // RL
-  {9, 8}    // RR
+  {3, 2},   // FL (left side)
+  {5, 4},   // FR (right side)
+  {6, 7},   // RL (left side)
+  {9, 8}    // RR (right side)
 };
 const uint8_t NUM_MOTORS = 4;
+
+// Motor index aliases for readability
+#define MOTOR_FL 0
+#define MOTOR_FR 1
+#define MOTOR_RL 2
+#define MOTOR_RR 3
+
+// Current speed (0-255), adjusted by 0-9 keys
+uint8_t currentSpeed = 128;  // default 50%
+
+// Turn speed is 20% of max (255)
+const uint8_t TURN_SPEED = 51;  // 255 * 0.20 = 51
 
 // --- Forward Declarations ---
 void driveMotor(Motor m, MotorDir dir, uint8_t speed);
 void driveAll(MotorDir dir, uint8_t speed);
 void stopAll();
 void brakeAll();
+void turnLeft();
+void turnRight();
 
 // --- Core Motor Control ---
 
@@ -62,9 +83,6 @@ void driveMotor(Motor m, MotorDir dir, uint8_t speed) {
       analogWrite(m.pinB, speed);
       break;
     case BRAKE:
-      digitalWrite(m.pinA, LOW);
-      digitalWrite(m.pinB, LOW);
-      break;
     case COAST:
     default:
       digitalWrite(m.pinA, LOW);
@@ -85,6 +103,22 @@ void stopAll() {
 
 void brakeAll() {
   driveAll(BRAKE, 0);
+}
+
+// Left wheels reverse, right wheels forward
+void turnLeft() {
+  driveMotor(MOTORS[MOTOR_FL], REVERSE, TURN_SPEED);
+  driveMotor(MOTORS[MOTOR_RL], REVERSE, TURN_SPEED);
+  driveMotor(MOTORS[MOTOR_FR], FORWARD, TURN_SPEED);
+  driveMotor(MOTORS[MOTOR_RR], FORWARD, TURN_SPEED);
+}
+
+// Left wheels forward, right wheels reverse
+void turnRight() {
+  driveMotor(MOTORS[MOTOR_FL], FORWARD, TURN_SPEED);
+  driveMotor(MOTORS[MOTOR_RL], FORWARD, TURN_SPEED);
+  driveMotor(MOTORS[MOTOR_FR], REVERSE, TURN_SPEED);
+  driveMotor(MOTORS[MOTOR_RR], REVERSE, TURN_SPEED);
 }
 
 // --- Test Routines ---
@@ -110,26 +144,6 @@ void rampTest(MotorDir dir, const char* label) {
   Serial.println("[TEST] Done. Motors stopped.");
 }
 
-void rampForward() { rampTest(FORWARD, "FORWARD"); }
-void rampReverse() { rampTest(REVERSE, "REVERSE"); }
-
-void directionCycleTest() {
-  Serial.println("[TEST] Direction cycle: FWD 2s -> brake -> REV 2s -> brake");
-
-  driveAll(FORWARD, 128);
-  delay(2000);
-  brakeAll();
-  delay(500);
-
-  driveAll(REVERSE, 128);
-  delay(2000);
-  brakeAll();
-  delay(500);
-
-  stopAll();
-  Serial.println("[TEST] Cycle complete.");
-}
-
 // --- Serial Command Handler ---
 
 void handleSerial() {
@@ -138,34 +152,56 @@ void handleSerial() {
   char cmd = Serial.read();
 
   switch (cmd) {
-    case 'f':
-      rampForward();
+    case 'w':
+      driveAll(FORWARD, currentSpeed);
+      Serial.print("[CMD] Forward at ");
+      Serial.print(currentSpeed);
+      Serial.println("/255");
       break;
-    case 'r':
-      rampReverse();
-      break;
-    case 'd':
-      directionCycleTest();
-      break;
+
     case 's':
+      driveAll(REVERSE, currentSpeed);
+      Serial.print("[CMD] Reverse at ");
+      Serial.print(currentSpeed);
+      Serial.println("/255");
+      break;
+
+    case 'a':
+      turnLeft();
+      Serial.println("[CMD] Turning left");
+      break;
+
+    case 'd':
+      turnRight();
+      Serial.println("[CMD] Turning right");
+      break;
+
+    case 'x':
       stopAll();
       Serial.println("[CMD] Stopped.");
       break;
+
     case '0' ... '9': {
-      // NOTE: 0 means 100% to stop use command 's'
-      uint8_t percent = (cmd == '0') ? 1 : (cmd - '0') / 10;
-      uint8_t speed = (uint8_t)(percent * 5000);
-      driveAll(FORWARD, speed);
-      Serial.print("[CMD] Forward speed: ");
-      uint8_t printValue = (cmd == '0') ? 100 : (cmd - '0') * 10;
-      Serial.print(printValue);
+      uint8_t percent = (cmd == '0') ? 100 : (cmd - '0') * 10;
+      currentSpeed = (uint8_t)(percent * 255 / 100);
+      Serial.print("[CMD] Speed set to ");
+      Serial.print(percent);
       Serial.print("% (");
-      Serial.print(speed);
-      Serial.println("/5000)");
+      Serial.print(currentSpeed);
+      Serial.println("/255) -- send w/s/a/d to move");
       break;
     }
+
+    case 'f':
+      rampTest(FORWARD, "FORWARD");
+      break;
+
+    case 'r':
+      rampTest(REVERSE, "REVERSE");
+      break;
+
     default:
-      Serial.println("[CMD] Unknown. Commands: f=fwd ramp, r=rev ramp, d=dir cycle, s=stop, 0-9=speed");
+      Serial.println("[CMD] Unknown. w=fwd s=rev a=left d=right x=stop 0-9=speed f/r=ramp");
       break;
   }
 }
@@ -174,8 +210,9 @@ void handleSerial() {
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("=== RC Car Motor Test ===");
-  Serial.println("Commands: f=fwd, r=rev, d=dir cycle, s=stop, 0-9=speed");
+  Serial.println("=== Drisky ===");
+  Serial.println("w=fwd s=rev a=left d=right x=stop 0-9=set speed");
+  Serial.print("Default speed: 50% (128/255)");
 
   for (uint8_t i = 0; i < NUM_MOTORS; i++) {
     pinMode(MOTORS[i].pinA, OUTPUT);
@@ -184,7 +221,7 @@ void setup() {
     digitalWrite(MOTORS[i].pinB, LOW);
   }
 
-  Serial.println("Ready.");
+  Serial.println("\nReady.");
 }
 
 void loop() {
