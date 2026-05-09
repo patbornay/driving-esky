@@ -1,33 +1,41 @@
 /**
- * RC Car - Motor Test
- * Arduino Uno + IRF3205 MOSFETs
+ * RC Car - Motor Test + IR Obstacle Sensor Logging
+ * Arduino Uno + IRF3205 MOSFETs + Duinotech XC4524 IR Sensors
  *
- * Wiring per motor (low-side switch, forward only for now):
- *   Motor(+) ---> 12V
- *   Motor(-) ---> IRF3205 Drain
- *   IRF3205 Source --> GND (common with Arduino GND)
- *   IRF3205 Gate  --> 100Ω --> PWM Pin
- *                          +-- 10kΩ --> GND (pull-down)
- *
- * PIN ASSIGNMENTS (2 pins per motor: pinA=forward, pinB=reverse):
+ * MOTOR PIN ASSIGNMENTS (2 pins per motor: pinA=forward, pinB=reverse):
  *   Motor FL : pinA=D3,  pinB=D2
  *   Motor FR : pinA=D5,  pinB=D4
  *   Motor RL : pinA=D6,  pinB=D7
  *   Motor RR : pinA=D9,  pinB=D8
  *
+ * IR SENSOR WIRING (Duinotech XC4524):
+ *   VCC --> 5V on Arduino
+ *   GND --> GND (common)
+ *   OUT --> Digital pin (see below)
+ *   EN  --> Leave disconnected
+ *
+ *   Sensor FRONT-LEFT  : OUT --> D10
+ *   Sensor FRONT-RIGHT : OUT --> D11
+ *
+ *   Logic: LOW = obstacle detected, HIGH = clear
+ *
  * COMMANDS:
- *   w      - forward (all motors)
- *   s      - reverse (all motors)
- *   a      - turn left  (left wheels reverse, right wheels forward)
- *   d      - turn right (left wheels forward, right wheels reverse)
+ *   w      - forward at current speed
+ *   s      - reverse at current speed
+ *   a      - turn left  (left reverse, right forward)
+ *   d      - turn right (left forward, right reverse)
  *   x      - stop
- *   0-9    - set speed (1=10%, 2=20% ... 9=90%, 0=100%)
+ *   0-9    - set speed (1=10% ... 9=90%, 0=100%)
  *   f/r    - ramp test forward/reverse
+ *   i      - print current IR sensor readings
  */
 
 #include <Arduino.h>
 
+// ============================================================
 // --- Types ---
+// ============================================================
+
 typedef enum {
   FORWARD,
   REVERSE,
@@ -36,41 +44,81 @@ typedef enum {
 } MotorDir;
 
 typedef struct {
-  uint8_t pinA;  // forward
-  uint8_t pinB;  // reverse
+  uint8_t pinA;  // forward gate
+  uint8_t pinB;  // reverse gate
 } Motor;
 
+// Tracks what the car is currently doing (for sensor log context)
+typedef enum {
+  STATE_STOPPED,
+  STATE_FORWARD,
+  STATE_REVERSE,
+  STATE_TURN_LEFT,
+  STATE_TURN_RIGHT
+} CarState;
+
+// ============================================================
 // --- Motor Definitions ---
-//                FL      FR      RL      RR
+// ============================================================
+
 const Motor MOTORS[] = {
-  {3, 2},   // FL (left side)
-  {5, 4},   // FR (right side)
-  {6, 7},   // RL (left side)
-  {9, 8}    // RR (right side)
+  {3, A0},  // FL: D3=PWM fwd, A0=digital rev
+  {5, A1},  // FR: D5=PWM fwd, A1=digital rev
+  {6, A2},  // RL: D6=PWM fwd, A2=digital rev
+  {9, A3},  // RR: D9=PWM fwd, A3=digital rev
 };
 const uint8_t NUM_MOTORS = 4;
 
-// Motor index aliases for readability
 #define MOTOR_FL 0
 #define MOTOR_FR 1
 #define MOTOR_RL 2
 #define MOTOR_RR 3
 
-// Current speed (0-255), adjusted by 0-9 keys
-uint8_t currentSpeed = 128;  // default 50%
+// ============================================================
+// --- IR Sensor Definitions ---
+// ============================================================
 
-// Turn speed is 20% of max (255)
-const uint8_t TURN_SPEED = 51;  // 255 * 0.20 = 51
+#define IR_FRONT_LEFT_PIN  10
+#define IR_FRONT_RIGHT_PIN 11
 
+// LOW = obstacle detected (active low)
+#define IR_OBSTACLE   LOW
+#define IR_CLEAR      HIGH
+
+struct IRReadings {
+  bool frontLeftBlocked;
+  bool frontRightBlocked;
+};
+
+// ============================================================
+// --- State ---
+// ============================================================
+
+uint8_t  currentSpeed = 128;           // default 50%
+CarState carState     = STATE_STOPPED;
+const uint8_t TURN_SPEED = 51;         // 20% of 255
+
+// How often to poll sensors while moving (ms)
+#define SENSOR_POLL_MS 200
+unsigned long lastSensorPoll = 0;
+
+// ============================================================
 // --- Forward Declarations ---
+// ============================================================
+
 void driveMotor(Motor m, MotorDir dir, uint8_t speed);
 void driveAll(MotorDir dir, uint8_t speed);
 void stopAll();
 void brakeAll();
 void turnLeft();
 void turnRight();
+IRReadings readIR();
+void logIR(IRReadings r, const char* context);
+void pollIRIfMoving();
 
+// ============================================================
 // --- Core Motor Control ---
+// ============================================================
 
 void driveMotor(Motor m, MotorDir dir, uint8_t speed) {
   switch (dir) {
@@ -99,29 +147,75 @@ void driveAll(MotorDir dir, uint8_t speed) {
 
 void stopAll() {
   driveAll(COAST, 0);
+  carState = STATE_STOPPED;
 }
 
 void brakeAll() {
   driveAll(BRAKE, 0);
+  carState = STATE_STOPPED;
 }
 
-// Left wheels reverse, right wheels forward
 void turnLeft() {
   driveMotor(MOTORS[MOTOR_FL], REVERSE, TURN_SPEED);
   driveMotor(MOTORS[MOTOR_RL], REVERSE, TURN_SPEED);
   driveMotor(MOTORS[MOTOR_FR], FORWARD, TURN_SPEED);
   driveMotor(MOTORS[MOTOR_RR], FORWARD, TURN_SPEED);
+  carState = STATE_TURN_LEFT;
 }
 
-// Left wheels forward, right wheels reverse
 void turnRight() {
   driveMotor(MOTORS[MOTOR_FL], FORWARD, TURN_SPEED);
   driveMotor(MOTORS[MOTOR_RL], FORWARD, TURN_SPEED);
   driveMotor(MOTORS[MOTOR_FR], REVERSE, TURN_SPEED);
   driveMotor(MOTORS[MOTOR_RR], REVERSE, TURN_SPEED);
+  carState = STATE_TURN_RIGHT;
 }
 
+// ============================================================
+// --- IR Sensor ---
+// ============================================================
+
+IRReadings readIR() {
+  IRReadings r;
+  r.frontLeftBlocked  = (digitalRead(IR_FRONT_LEFT_PIN)  == IR_OBSTACLE);
+  r.frontRightBlocked = (digitalRead(IR_FRONT_RIGHT_PIN) == IR_OBSTACLE);
+  return r;
+}
+
+void logIR(IRReadings r, const char* context) {
+  Serial.print("[IR] ");
+  Serial.print(context);
+  Serial.print(" | FL:");
+  Serial.print(r.frontLeftBlocked  ? "BLOCKED" : "clear  ");
+  Serial.print(" FR:");
+  Serial.println(r.frontRightBlocked ? "BLOCKED" : "clear");
+}
+
+const char* stateLabel() {
+  switch (carState) {
+    case STATE_FORWARD:    return "FORWARD   ";
+    case STATE_REVERSE:    return "REVERSE   ";
+    case STATE_TURN_LEFT:  return "TURN_LEFT ";
+    case STATE_TURN_RIGHT: return "TURN_RIGHT";
+    default:               return "STOPPED   ";
+  }
+}
+
+// Poll IR sensors periodically while the car is moving
+void pollIRIfMoving() {
+  if (carState == STATE_STOPPED) return;
+
+  unsigned long now = millis();
+  if (now - lastSensorPoll >= SENSOR_POLL_MS) {
+    lastSensorPoll = now;
+    IRReadings r = readIR();
+    logIR(r, stateLabel());
+  }
+}
+
+// ============================================================
 // --- Test Routines ---
+// ============================================================
 
 void rampTest(MotorDir dir, const char* label) {
   Serial.print("[TEST] Ramping ");
@@ -144,7 +238,12 @@ void rampTest(MotorDir dir, const char* label) {
   Serial.println("[TEST] Done. Motors stopped.");
 }
 
+void rampForward() { rampTest(FORWARD, "FORWARD"); }
+void rampReverse() { rampTest(REVERSE, "REVERSE"); }
+
+// ============================================================
 // --- Serial Command Handler ---
+// ============================================================
 
 void handleSerial() {
   if (!Serial.available()) return;
@@ -154,6 +253,7 @@ void handleSerial() {
   switch (cmd) {
     case 'w':
       driveAll(FORWARD, currentSpeed);
+      carState = STATE_FORWARD;
       Serial.print("[CMD] Forward at ");
       Serial.print(currentSpeed);
       Serial.println("/255");
@@ -161,6 +261,7 @@ void handleSerial() {
 
     case 's':
       driveAll(REVERSE, currentSpeed);
+      carState = STATE_REVERSE;
       Serial.print("[CMD] Reverse at ");
       Serial.print(currentSpeed);
       Serial.println("/255");
@@ -181,6 +282,13 @@ void handleSerial() {
       Serial.println("[CMD] Stopped.");
       break;
 
+    case 'i': {
+      // Manual IR snapshot
+      IRReadings r = readIR();
+      logIR(r, stateLabel());
+      break;
+    }
+
     case '0' ... '9': {
       uint8_t percent = (cmd == '0') ? 100 : (cmd - '0') * 10;
       currentSpeed = (uint8_t)(percent * 255 / 100);
@@ -193,27 +301,29 @@ void handleSerial() {
     }
 
     case 'f':
-      rampTest(FORWARD, "FORWARD");
+      rampForward();
       break;
 
     case 'r':
-      rampTest(REVERSE, "REVERSE");
+      rampReverse();
       break;
 
     default:
-      Serial.println("[CMD] Unknown. w=fwd s=rev a=left d=right x=stop 0-9=speed f/r=ramp");
+      Serial.println("[CMD] Unknown. w=fwd s=rev a=left d=right x=stop i=IR 0-9=speed f/r=ramp");
       break;
   }
 }
 
+// ============================================================
 // --- Arduino Lifecycle ---
+// ============================================================
 
 void setup() {
   Serial.begin(9600);
   Serial.println("=== Drisky ===");
-  Serial.println("w=fwd s=rev a=left d=right x=stop 0-9=set speed");
-  Serial.print("Default speed: 50% (128/255)");
+  Serial.println("w=fwd s=rev a=left d=right x=stop i=IR snapshot 0-9=speed");
 
+  // Motor pins
   for (uint8_t i = 0; i < NUM_MOTORS; i++) {
     pinMode(MOTORS[i].pinA, OUTPUT);
     pinMode(MOTORS[i].pinB, OUTPUT);
@@ -221,9 +331,18 @@ void setup() {
     digitalWrite(MOTORS[i].pinB, LOW);
   }
 
-  Serial.println("\nReady.");
+  // IR sensor pins
+  pinMode(IR_FRONT_LEFT_PIN,  INPUT);
+  pinMode(IR_FRONT_RIGHT_PIN, INPUT);
+
+  // Initial sensor reading
+  IRReadings r = readIR();
+  logIR(r, "STARTUP   ");
+
+  Serial.println("Ready.");
 }
 
 void loop() {
   handleSerial();
+  pollIRIfMoving();
 }
