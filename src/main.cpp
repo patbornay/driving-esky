@@ -98,11 +98,18 @@ void handleSerial() {
     stopAll();
     Serial.println("[CMD] Stopped.");
   } else if (cmd >= '0' && cmd <= '9') {
-    // Map '0'-'9' → 0-5000
-    uint8_t speed = map(cmd - '0', 0, 9, 0, 5000);
-    setAllMotors(speed);
-    Serial.print("[CMD] Speed set to: ");
-    Serial.println(speed);
+    case '0' ... '9': {
+      // '1'=10%, '2'=20% ... '9'=90%, '0'=100% (full send)
+      uint8_t percent = (cmd == '0') ? 100 : (cmd - '0') * 10;
+      uint8_t speed = (uint8_t)(percent * 255 / 100);
+      driveAll(FORWARD, speed);
+      Serial.print("[CMD] Forward speed: ");
+      Serial.print(percent);
+      Serial.print("% (");
+      Serial.print(speed);
+      Serial.println("/255)");
+      break;
+    }
   } else {
     Serial.println("[CMD] Unknown. Use: r=ramp, s=stop, 0-9=speed");
   }
