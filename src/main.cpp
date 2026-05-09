@@ -1,24 +1,27 @@
 /**
- * RC Car - Basic Motor Test
- * Arduino Uno + IRF3205 MOSFETs (low-side switch, one per motor)
+ * RC Car - Motor Test
+ * Arduino Uno + IRF3205 MOSFETs
  *
- * Wiring per motor:
+ * Wiring per motor (low-side switch, forward only for now):
  *   Motor(+) ---> 12V
  *   Motor(-) ---> IRF3205 Drain
  *   IRF3205 Source --> GND (common with Arduino GND)
  *   IRF3205 Gate  --> 100Ω --> PWM Pin
- *                            +-- 10kΩ --> GND  (pull-down, prevents float)
+ *                          +-- 10kΩ --> GND (pull-down)
  *
- * PWM Pins used (all support analogWrite on Uno):
- *   Motor FL (Front Left)  : D3
- *   Motor FR (Front Right) : D5
- *   Motor RL (Rear Left)   : D6
- *   Motor RR (Rear Right)  : D9
+ * PIN ASSIGNMENTS (2 pins per motor: pinA=forward, pinB=reverse):
+ *   Motor FL : pinA=D3,  pinB=D2
+ *   Motor FR : pinA=D5,  pinB=D4
+ *   Motor RL : pinA=D6,  pinB=D7
+ *   Motor RR : pinA=D9,  pinB=D8
+ *
+ * NOTE: Reverse requires an H-bridge. For now, pinB does nothing.
+ *       Physically swap motor wires to test reverse direction manually.
  */
 
 #include <Arduino.h>
 
-// --- Types (must come first) ---
+// --- Types ---
 typedef enum {
   FORWARD,
   REVERSE,
@@ -27,70 +30,79 @@ typedef enum {
 } MotorDir;
 
 typedef struct {
-  uint8_t pinA;
-  uint8_t pinB;
+  uint8_t pinA;  // forward
+  uint8_t pinB;  // reverse
 } Motor;
 
+// --- Motor Definitions ---
+const Motor MOTORS[] = {
+  {3, 2},   // FL
+  {5, 4},   // FR
+  {6, 7},   // RL
+  {9, 8}    // RR
+};
+const uint8_t NUM_MOTORS = 4;
+
 // --- Forward Declarations ---
+void driveMotor(Motor m, MotorDir dir, uint8_t speed);
 void driveAll(MotorDir dir, uint8_t speed);
 void stopAll();
 void brakeAll();
 
-// --- Pin Definitions ---
-const uint8_t PIN_MOTOR_FL = 3;   // Front Left
-const uint8_t PIN_MOTOR_FR = 5;   // Front Right
-const uint8_t PIN_MOTOR_RL = 6;   // Rear Left
-const uint8_t PIN_MOTOR_RR = 9;   // Rear Right
+// --- Core Motor Control ---
 
-const uint8_t MOTOR_PINS[] = {PIN_MOTOR_FL, PIN_MOTOR_FR, PIN_MOTOR_RL, PIN_MOTOR_RR};
-const uint8_t NUM_MOTORS = 4;
-
-// --- Motor Control ---
-
-/**
- * Set speed of a single motor.
- * @param pin   PWM pin connected to MOSFET gate
- * @param speed 0 (off) to 255 (full speed)
- */
-void setMotor(uint8_t pin, uint8_t speed) {
-  analogWrite(pin, speed);
-}
-
-/**
- * Set all four motors to the same speed.
- */
-void setAllMotors(uint8_t speed) {
-  for (uint8_t i = 0; i < NUM_MOTORS; i++) {
-    setMotor(MOTOR_PINS[i], speed);
+void driveMotor(Motor m, MotorDir dir, uint8_t speed) {
+  switch (dir) {
+    case FORWARD:
+      analogWrite(m.pinA, speed);
+      digitalWrite(m.pinB, LOW);
+      break;
+    case REVERSE:
+      digitalWrite(m.pinA, LOW);
+      analogWrite(m.pinB, speed);
+      break;
+    case BRAKE:
+      digitalWrite(m.pinA, LOW);
+      digitalWrite(m.pinB, LOW);
+      break;
+    case COAST:
+    default:
+      digitalWrite(m.pinA, LOW);
+      digitalWrite(m.pinB, LOW);
+      break;
   }
 }
 
-/**
- * Stop all motors immediately.
- */
+void driveAll(MotorDir dir, uint8_t speed) {
+  for (uint8_t i = 0; i < NUM_MOTORS; i++) {
+    driveMotor(MOTORS[i], dir, speed);
+  }
+}
+
 void stopAll() {
-  setAllMotors(0);
+  driveAll(COAST, 0);
+}
+
+void brakeAll() {
+  driveAll(BRAKE, 0);
 }
 
 // --- Test Routines ---
 
-/**
- * Ramp all motors from 0 → max → 0 smoothly.
- * Good first test to confirm wiring before adding direction control.
- */
-void rampTest() {
-  Serial.println("[TEST] Ramping UP...");
-  for (int spd = 0; spd <= 5000; spd += 1000) {
-    setAllMotors(spd);
+void rampTest(MotorDir dir, const char* label) {
+  Serial.print("[TEST] Ramping ");
+  Serial.println(label);
+
+  for (int spd = 0; spd <= 255; spd += 5) {
+    driveAll(dir, spd);
     delay(30);
   }
 
-  Serial.println("[TEST] Holding full speed for 10s...");
-  delay(10000);
+  Serial.println("[TEST] Holding full speed for 2s...");
+  delay(2000);
 
-  Serial.println("[TEST] Ramping DOWN...");
-  for (int spd = 5000; spd >= 0; spd -= 1000) {
-    setAllMotors(spd);
+  for (int spd = 255; spd >= 0; spd -= 5) {
+    driveAll(dir, spd);
     delay(30);
   }
 
@@ -98,30 +110,50 @@ void rampTest() {
   Serial.println("[TEST] Done. Motors stopped.");
 }
 
-/**
- * Simple serial command interface for manual testing.
- * Commands:
- *   'r'        - run ramp test
- *   '0'–'9'   - set speed to 0%, 11%, 22%... 100%
- *   's'        - stop
- */
+void rampForward() { rampTest(FORWARD, "FORWARD"); }
+void rampReverse() { rampTest(REVERSE, "REVERSE"); }
+
+void directionCycleTest() {
+  Serial.println("[TEST] Direction cycle: FWD 2s -> brake -> REV 2s -> brake");
+
+  driveAll(FORWARD, 128);
+  delay(2000);
+  brakeAll();
+  delay(500);
+
+  driveAll(REVERSE, 128);
+  delay(2000);
+  brakeAll();
+  delay(500);
+
+  stopAll();
+  Serial.println("[TEST] Cycle complete.");
+}
+
+// --- Serial Command Handler ---
+
 void handleSerial() {
   if (!Serial.available()) return;
 
   char cmd = Serial.read();
 
   switch (cmd) {
-    // case 'f': rampForward(); break;
-    case 'r': rampTest(); break;
-    // case 'd': directionCycleTest(); break;
-    // case 'b': brakeTest(); break;
+    case 'f':
+      rampForward();
+      break;
+    case 'r':
+      rampReverse();
+      break;
+    case 'd':
+      directionCycleTest();
+      break;
     case 's':
       stopAll();
-      Serial.println("[CMD] Coasting to stop.");
+      Serial.println("[CMD] Stopped.");
       break;
     case '0' ... '9': {
       uint8_t percent = (cmd == '0') ? 100 : (cmd - '0') * 10;
-      uint8_t speed = (uint8_t)(percent * 5000 / 100);
+      uint8_t speed = (uint8_t)(percent * 255 / 100);
       driveAll(FORWARD, speed);
       Serial.print("[CMD] Forward speed: ");
       Serial.print(percent);
@@ -131,7 +163,7 @@ void handleSerial() {
       break;
     }
     default:
-      Serial.println("[CMD] Unknown. Use: f=fwd, r=rev, d=cycle, b=brake, s=stop, 0-9=speed");
+      Serial.println("[CMD] Unknown. Commands: f=fwd ramp, r=rev ramp, d=dir cycle, s=stop, 0-9=speed");
       break;
   }
 }
@@ -141,14 +173,16 @@ void handleSerial() {
 void setup() {
   Serial.begin(9600);
   Serial.println("=== RC Car Motor Test ===");
-  Serial.println("Commands: r=ramp test, s=stop, 0-9=set speed");
+  Serial.println("Commands: f=fwd, r=rev, d=dir cycle, s=stop, 0-9=speed");
 
   for (uint8_t i = 0; i < NUM_MOTORS; i++) {
-    pinMode(MOTOR_PINS[i], OUTPUT);
-    digitalWrite(MOTOR_PINS[i], LOW);  // Ensure MOSFETs start OFF
+    pinMode(MOTORS[i].pinA, OUTPUT);
+    pinMode(MOTORS[i].pinB, OUTPUT);
+    digitalWrite(MOTORS[i].pinA, LOW);
+    digitalWrite(MOTORS[i].pinB, LOW);
   }
 
-  Serial.println("Motors initialised. Ready.");
+  Serial.println("Ready.");
 }
 
 void loop() {
