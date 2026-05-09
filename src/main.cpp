@@ -62,16 +62,16 @@ void stopAll() {
  */
 void rampTest() {
   Serial.println("[TEST] Ramping UP...");
-  for (int spd = 0; spd <= 255; spd += 5) {
+  for (int spd = 0; spd <= 5000; spd += 1000) {
     setAllMotors(spd);
     delay(30);
   }
 
-  Serial.println("[TEST] Holding full speed for 2s...");
-  delay(2000);
+  Serial.println("[TEST] Holding full speed for 10s...");
+  delay(10000);
 
   Serial.println("[TEST] Ramping DOWN...");
-  for (int spd = 255; spd >= 0; spd -= 5) {
+  for (int spd = 5000; spd >= 0; spd -= 1000) {
     setAllMotors(spd);
     delay(30);
   }
@@ -98,8 +98,8 @@ void handleSerial() {
     stopAll();
     Serial.println("[CMD] Stopped.");
   } else if (cmd >= '0' && cmd <= '9') {
-    // Map '0'-'9' → 0-255
-    uint8_t speed = map(cmd - '0', 0, 9, 0, 255);
+    // Map '0'-'9' → 0-5000
+    uint8_t speed = map(cmd - '0', 0, 9, 0, 5000);
     setAllMotors(speed);
     Serial.print("[CMD] Speed set to: ");
     Serial.println(speed);
