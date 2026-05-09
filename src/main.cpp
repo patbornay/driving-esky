@@ -18,6 +18,24 @@
 
 #include <Arduino.h>
 
+// --- Types (must come first) ---
+typedef enum {
+  FORWARD,
+  REVERSE,
+  BRAKE,
+  COAST
+} MotorDir;
+
+typedef struct {
+  uint8_t pinA;
+  uint8_t pinB;
+} Motor;
+
+// --- Forward Declarations ---
+void driveAll(MotorDir dir, uint8_t speed);
+void stopAll();
+void brakeAll();
+
 // --- Pin Definitions ---
 const uint8_t PIN_MOTOR_FL = 3;   // Front Left
 const uint8_t PIN_MOTOR_FR = 5;   // Front Right
@@ -103,6 +121,7 @@ void handleSerial() {
       uint8_t percent = (cmd == '0') ? 100 : (cmd - '0') * 10;
       uint8_t speed = (uint8_t)(percent * 255 / 100);
       driveAll(FORWARD, speed);
+      
       Serial.print("[CMD] Forward speed: ");
       Serial.print(percent);
       Serial.print("% (");
