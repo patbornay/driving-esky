@@ -152,14 +152,16 @@ void handleSerial() {
       Serial.println("[CMD] Stopped.");
       break;
     case '0' ... '9': {
-      uint8_t percent = (cmd == '0') ? 100 : (cmd - '0') * 10;
-      uint8_t speed = (uint8_t)(percent * 255 / 100);
+      // NOTE: 0 means 100% to stop use command 's'
+      uint8_t percent = (cmd == '0') ? 1 : (cmd - '0') / 10;
+      uint8_t speed = (uint8_t)(percent * 5000);
       driveAll(FORWARD, speed);
       Serial.print("[CMD] Forward speed: ");
-      Serial.print(percent);
+      uint8_t printValue = (cmd == '0') ? 100 : (cmd - '0') * 10;
+      Serial.print(printValue);
       Serial.print("% (");
       Serial.print(speed);
-      Serial.println("/255)");
+      Serial.println("/5000)");
       break;
     }
     default:
