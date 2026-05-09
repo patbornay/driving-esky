@@ -110,18 +110,19 @@ void handleSerial() {
 
   char cmd = Serial.read();
 
-  if (cmd == 'r') {
-    rampTest();
-  } else if (cmd == 's') {
-    stopAll();
-    Serial.println("[CMD] Stopped.");
-  } else if (cmd >= '0' && cmd <= '9') {
+  switch (cmd) {
+    // case 'f': rampForward(); break;
+    case 'r': rampTest(); break;
+    // case 'd': directionCycleTest(); break;
+    // case 'b': brakeTest(); break;
+    case 's':
+      stopAll();
+      Serial.println("[CMD] Coasting to stop.");
+      break;
     case '0' ... '9': {
-      // '1'=10%, '2'=20% ... '9'=90%, '0'=100% (full send)
       uint8_t percent = (cmd == '0') ? 100 : (cmd - '0') * 10;
-      uint8_t speed = (uint8_t)(percent * 255 / 100);
+      uint8_t speed = (uint8_t)(percent * 5000 / 100);
       driveAll(FORWARD, speed);
-      
       Serial.print("[CMD] Forward speed: ");
       Serial.print(percent);
       Serial.print("% (");
@@ -129,8 +130,9 @@ void handleSerial() {
       Serial.println("/255)");
       break;
     }
-  } else {
-    Serial.println("[CMD] Unknown. Use: r=ramp, s=stop, 0-9=speed");
+    default:
+      Serial.println("[CMD] Unknown. Use: f=fwd, r=rev, d=cycle, b=brake, s=stop, 0-9=speed");
+      break;
   }
 }
 
