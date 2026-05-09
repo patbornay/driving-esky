@@ -2,11 +2,11 @@
  * RC Car - Motor Test + IR Obstacle Sensor Logging
  * Arduino Uno + IRF3205 MOSFETs + Duinotech XC4524 IR Sensors
  *
- * MOTOR PIN ASSIGNMENTS (2 pins per motor: pinA=forward, pinB=reverse):
- *   Motor FL : pinA=D3,  pinB=D2
- *   Motor FR : pinA=D5,  pinB=D4
- *   Motor RL : pinA=D6,  pinB=D7
- *   Motor RR : pinA=D9,  pinB=D8
+ * MOTOR PIN ASSIGNMENTS (2 pins per motor: pinA=PWM fwd, pinB=digital rev):
+ *   Motor FL : pinA=D3,  pinB=A0
+ *   Motor FR : pinA=D5,  pinB=A1
+ *   Motor RL : pinA=D6,  pinB=A2
+ *   Motor RR : pinA=D9,  pinB=A3
  *
  * IR SENSOR WIRING (Duinotech XC4524):
  *   VCC --> 5V on Arduino
@@ -128,7 +128,7 @@ void driveMotor(Motor m, MotorDir dir, uint8_t speed) {
       break;
     case REVERSE:
       digitalWrite(m.pinA, LOW);
-      analogWrite(m.pinB, speed);
+      digitalWrite(m.pinB, HIGH);  // full on, no PWM on analog pins
       break;
     case BRAKE:
     case COAST:
@@ -214,7 +214,34 @@ void pollIRIfMoving() {
 }
 
 // ============================================================
-// --- Test Routines ---
+// --- Wheel Test Helpers ---
+
+void testMotor(uint8_t idx, const char* label) {
+  Serial.print("[TEST] Running ");
+  Serial.print(label);
+  Serial.print(" at ");
+  Serial.print(currentSpeed);
+  Serial.println("/255 -- send x to stop");
+  driveMotor(MOTORS[idx], FORWARD, currentSpeed);
+}
+
+void testFrontWheels() {
+  Serial.print("[TEST] Front wheels at ");
+  Serial.print(currentSpeed);
+  Serial.println("/255 -- send x to stop");
+  driveMotor(MOTORS[MOTOR_FL], FORWARD, currentSpeed);
+  driveMotor(MOTORS[MOTOR_FR], FORWARD, currentSpeed);
+}
+
+void testRearWheels() {
+  Serial.print("[TEST] Rear wheels at ");
+  Serial.print(currentSpeed);
+  Serial.println("/255 -- send x to stop");
+  driveMotor(MOTORS[MOTOR_RL], FORWARD, currentSpeed);
+  driveMotor(MOTORS[MOTOR_RR], FORWARD, currentSpeed);
+}
+
+
 // ============================================================
 
 void rampTest(MotorDir dir, const char* label) {
@@ -251,6 +278,36 @@ void handleSerial() {
   char cmd = Serial.read();
 
   switch (cmd) {
+    case 'g':
+      stopAll();
+      testFrontWheels();
+      break;
+
+    case 'h':
+      stopAll();
+      testRearWheels();
+      break;
+
+    case 'v':
+      stopAll();
+      testMotor(MOTOR_FL, "FL (Front Left)");
+      break;
+
+    case 'b':
+      stopAll();
+      testMotor(MOTOR_FR, "FR (Front Right)");
+      break;
+
+    case 'n':
+      stopAll();
+      testMotor(MOTOR_RL, "RL (Rear Left)");
+      break;
+
+    case 'm':
+      stopAll();
+      testMotor(MOTOR_RR, "RR (Rear Right)");
+      break;
+
     case 'w':
       driveAll(FORWARD, currentSpeed);
       carState = STATE_FORWARD;
@@ -309,7 +366,8 @@ void handleSerial() {
       break;
 
     default:
-      Serial.println("[CMD] Unknown. w=fwd s=rev a=left d=right x=stop i=IR 0-9=speed f/r=ramp");
+      Serial.println("[CMD] Unknown. w=fwd s=rev a=left d=right x=stop i=IR 0-9=speed");
+      Serial.println("         g=front h=rear v=FL b=FR n=RL m=RR f/r=ramp");
       break;
   }
 }
@@ -321,7 +379,8 @@ void handleSerial() {
 void setup() {
   Serial.begin(9600);
   Serial.println("=== Drisky ===");
-  Serial.println("w=fwd s=rev a=left d=right x=stop i=IR snapshot 0-9=speed");
+  Serial.println("w=fwd s=rev a=left d=right x=stop i=IR 0-9=speed");
+  Serial.println("g=front h=rear v=FL b=FR n=RL m=RR");
 
   // Motor pins
   for (uint8_t i = 0; i < NUM_MOTORS; i++) {
