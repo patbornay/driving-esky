@@ -38,7 +38,6 @@ typedef struct {
 } Motor;
 
 typedef enum {
-  LAST_TURN_NONE,
   LAST_TURN_LEFT,
   LAST_TURN_RIGHT
 } LastTurn;
@@ -65,14 +64,14 @@ const uint8_t NUM_MOTORS = 4;
 // Tune these if the shimmy is too wide or too slow
 const uint8_t LINE_SPEED      = 200;  // forward speed (EN jumper = full, this unused but kept for later)
 const uint8_t LINE_TURN_SPEED = 200;  // turn speed
-#define LINE_POLL_MS 50               // how often to check sensor (ms)
+#define LINE_POLL_MS 300  // how long each turn/straight lasts (ms) — increase to turn more
 
 // ============================================================
 // --- State ---
 // ============================================================
 
 bool     lineFollowing = false;
-LastTurn lastTurn      = LAST_TURN_NONE;
+LastTurn lastTurn      = LAST_TURN_LEFT;
 unsigned long lastLinePoll = 0;
 
 // ============================================================
@@ -171,6 +170,7 @@ void tickLineFollow() {
   if (lineDetected) {
     switch (lastTurn) {
       case LAST_TURN_LEFT:
+      default:
         lineFollowTurnRight();
         Serial.println("[LINE] On line → steering RIGHT");
         break;
@@ -178,26 +178,17 @@ void tickLineFollow() {
         lineFollowTurnLeft();
         Serial.println("[LINE] On line → steering LEFT");
         break;
-      case LAST_TURN_NONE:
-      default:
-        lineFollowStraight();
-        Serial.println("[LINE] On line → straight");
-        break;
     }
   } else {
     switch (lastTurn) {
       case LAST_TURN_RIGHT:
+      default:
         lineFollowTurnLeft();
         Serial.println("[LINE] Lost line → sweeping LEFT");
         break;
       case LAST_TURN_LEFT:
         lineFollowTurnRight();
         Serial.println("[LINE] Lost line → sweeping RIGHT");
-        break;
-      case LAST_TURN_NONE:
-      default:
-        lineFollowTurnLeft();
-        Serial.println("[LINE] Lost line → sweeping LEFT (default)");
         break;
     }
   }
@@ -215,7 +206,7 @@ void handleSerial() {
   switch (cmd) {
     case 'l':
       lineFollowing = true;
-      lastTurn = LAST_TURN_NONE;
+      lastTurn = LAST_TURN_LEFT;
       lastLinePoll = 0;
       Serial.println("[LINE] Line follow ON -- send 'k' to stop");
       break;
